@@ -15,19 +15,83 @@ type Cli struct {
 	Output string `short:"o" long:"output" description:"Output file name."`
 }
 
-type PropMap struct {
-	Level    int
-	Entries  map[string]int
-	Children map[string]PropMap
+type TokenType string
+
+const (
+	TokenTypeField       TokenType = "FIELD"
+	TokenTypeObjectStart TokenType = "OBJECT_START"
+	TokenTypeArrayStart  TokenType = "ARRAY_START"
+	TokenTypeObjectEnd   TokenType = "OBJECT_END"
+	TokenTypeArrayEnd    TokenType = "ARRAY_END"
+)
+
+type Token struct {
+	Type  TokenType `json:"token_type"`
+	Depth int
+	Name  string
+	Count int
 }
 
-func (p *PropMap) Print() {
-	padding := strings.Repeat(" ", p.Level)
-	for key, value := range p.Entries {
-		fmt.Printf("%s%s: %d\n", padding, key, value)
-		if child, ok := p.Children[key]; ok {
-			child.Print()
+type TokenSet struct {
+	tokens []*Token
+}
+
+func (t *TokenSet) AddToken(token *Token) {
+	t.tokens = append(t.tokens, token)
+}
+
+func (t *TokenSet) FindToken(name string) (*Token, error) {
+	i := len(t.tokens) - 1
+	for i >= 0 {
+		if t.tokens[i].Type == TokenTypeObjectStart {
+			return nil, errors.New("field not in object scope")
 		}
+		if t.tokens[i].Name == name {
+			return t.tokens[i], nil
+		}
+		i--
+	}
+	return nil, errors.New("field not found")
+}
+
+func printTokenSet(tokenSet *TokenSet) {
+	for i, token := range tokenSet.tokens {
+		if token.Type == TokenTypeObjectStart || token.Type == TokenTypeObjectEnd {
+			printObject(token, i == len(tokenSet.tokens)-1)
+		} else if token.Type == TokenTypeArrayStart || token.Type == TokenTypeArrayEnd {
+			printArray(token)
+		} else {
+			printField(token)
+		}
+	}
+}
+
+func printField(token *Token) {
+	pad := strings.Repeat(" ", token.Depth*2)
+	fmt.Printf("%s%s: %d\n", pad, token.Name, token.Count)
+}
+
+func printObject(token *Token, end bool) {
+	pad := strings.Repeat(" ", token.Depth*2)
+	if end {
+		fmt.Println("}")
+	} else if token.Name == "" {
+		if token.Depth == 0 {
+			fmt.Println("{")
+		} else {
+			fmt.Printf("%s}\n", pad)
+		}
+	} else {
+		fmt.Printf("%s%s: {\n", pad, token.Name)
+	}
+}
+
+func printArray(token *Token) {
+	pad := strings.Repeat(" ", token.Depth*2)
+	if token.Name == "" {
+		fmt.Printf("%s]\n", pad)
+	} else {
+		fmt.Printf("%s%s: [\n", pad, token.Name)
 	}
 }
 
@@ -59,42 +123,126 @@ func main() {
 	if err = json.Unmarshal(fileBytes, &jsonObj); err != nil {
 		panic(err)
 	}
-	propMap := PropMap{
-		Level:    0,
-		Entries:  map[string]int{},
-		Children: map[string]PropMap{},
-	}
-	processObject(jsonObj, &propMap)
 
-	propMap.Print()
+	tokenSet := &TokenSet{
+		tokens: []*Token{},
+	}
+
+	processObject(0, "", jsonObj, tokenSet)
+
+	printTokenSet(tokenSet)
 }
 
-func processObject(object map[string]interface{}, propMap *PropMap) {
-	for key, value := range object {
-		if _, ok := propMap.Entries[key]; !ok {
-			propMap.Entries[key] = 0
-		}
-		propMap.Entries[key] = propMap.Entries[key] + 1
-		if _, ok := value.(map[string]interface{}); ok {
-			nested := PropMap{
-				Level:    propMap.Level + 1,
-				Entries:  map[string]int{},
-				Children: map[string]PropMap{},
+func processObject(depth int, name string, object map[string]interface{}, tokenSet *TokenSet) {
+	tokenSet.AddToken(&Token{
+		Type:  TokenTypeObjectStart,
+		Name:  name,
+		Depth: depth,
+	})
+	for k, v := range object {
+		if objValue, ok := v.(map[string]interface{}); ok {
+			processObject(depth+1, k, objValue, tokenSet)
+		} else if arrValue, ok := v.([]interface{}); ok {
+			processArray(depth+1, k, arrValue, tokenSet)
+		} else {
+			token, findErr := tokenSet.FindToken(k)
+			if findErr != nil {
+				token = &Token{
+					Type:  TokenTypeField,
+					Name:  k,
+					Count: 0,
+					Depth: depth + 1,
+				}
+				tokenSet.AddToken(token)
 			}
-			propMap.Children[key] = nested
-			processObject(value.(map[string]interface{}), &nested)
-		} else if array, ok := value.([]interface{}); ok {
-			for _, entry := range array {
-				if _, ok := entry.(map[string]interface{}); ok {
-					nested := PropMap{
-						Level:    propMap.Level + 1,
-						Entries:  map[string]int{},
-						Children: map[string]PropMap{},
+			token.Count++
+		}
+	}
+	tokenSet.AddToken(&Token{
+		Type:  TokenTypeObjectEnd,
+		Depth: depth,
+	})
+}
+
+func processArray(depth int, name string, array []interface{}, tokenSet *TokenSet) {
+	tokenSet.AddToken(&Token{
+		Type:  TokenTypeArrayStart,
+		Depth: depth,
+		Name:  name,
+	})
+	fields := make(map[string]int)
+	for _, v := range array {
+		if objValue, ok := v.(map[string]interface{}); ok {
+			objSet := &TokenSet{tokens: make([]*Token, 0)}
+			processObject(depth+1, "", objValue, objSet)
+			for _, f := range objSet.tokens {
+				if f.Type == TokenTypeField {
+					if _, ok := fields[f.Name]; ok {
+						fields[f.Name] += 1
+					} else {
+						fields[f.Name] = 1
 					}
-					propMap.Children[key] = nested
-					processObject(entry.(map[string]interface{}), &nested)
 				}
 			}
+		} else if arrValue, ok := v.([]interface{}); ok {
+			processArray(depth+1, "", arrValue, tokenSet)
+			// TODO Fix this and correctly process array within array.
 		}
 	}
+	for fk, fv := range fields {
+		tokenSet.AddToken(&Token{
+			Type:  TokenTypeField,
+			Name:  fk,
+			Count: fv,
+			Depth: depth + 1,
+		})
+	}
+	tokenSet.AddToken(&Token{
+		Type:  TokenTypeArrayEnd,
+		Depth: depth,
+	})
 }
+
+func ternary[T any](a T, b T, c bool) T {
+	if c {
+		return a
+	} else {
+		return b
+	}
+}
+
+/**
+Input:
+{
+  "Hello": "World",
+  "Foo": "Bar",
+  "Array-Objects": [
+    {
+      "Fiz": "Buz"
+    },
+    {
+      "Biz": "Baz",
+      "Fiz": "Dooz"
+    }
+  ],
+  "Object": {
+    "Apples": "Oranges"
+  }
+}
+Output:
+{
+	Hello: 1
+	Foo: 1
+	Array-Objects: 1
+	[
+		{
+			Fiz: 2
+			Biz: 1
+		}
+	]
+	Object: 1
+	{
+		Apples: 1
+	}
+}
+*/
