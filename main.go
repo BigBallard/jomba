@@ -76,8 +76,8 @@ func printObject(token *Token, end bool) {
 	if end {
 		fmt.Println("}")
 	} else if token.Name == "" {
-		if token.Depth == 0 {
-			fmt.Println("{")
+		if token.Depth == 0 || token.Name == "" {
+			fmt.Printf("%s{\n", pad)
 		} else {
 			fmt.Printf("%s}\n", pad)
 		}
@@ -175,6 +175,7 @@ func processArray(depth int, name string, array []interface{}, tokenSet *TokenSe
 		if objValue, ok := v.(map[string]interface{}); ok {
 			objSet := &TokenSet{tokens: make([]*Token, 0)}
 			processObject(depth+1, "", objValue, objSet)
+
 			for _, f := range objSet.tokens {
 				if f.Type == TokenTypeField {
 					if _, ok := fields[f.Name]; ok {
@@ -189,14 +190,16 @@ func processArray(depth int, name string, array []interface{}, tokenSet *TokenSe
 			// TODO Fix this and correctly process array within array.
 		}
 	}
+	tokenSet.AddToken(&Token{Type: TokenTypeObjectStart, Depth: depth + 1, Name: ""})
 	for fk, fv := range fields {
 		tokenSet.AddToken(&Token{
 			Type:  TokenTypeField,
 			Name:  fk,
 			Count: fv,
-			Depth: depth + 1,
+			Depth: depth + 2,
 		})
 	}
+	tokenSet.AddToken(&Token{Type: TokenTypeObjectEnd, Depth: depth + 1})
 	tokenSet.AddToken(&Token{
 		Type:  TokenTypeArrayEnd,
 		Depth: depth,
