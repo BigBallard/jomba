@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"github.com/jessevdk/go-flags"
 	"os"
 	"path/filepath"
@@ -18,81 +19,96 @@ type Cli struct {
 type TokenType string
 
 const (
-	TokenTypeField       TokenType = "FIELD"
-	TokenTypeObjectStart TokenType = "OBJECT_START"
-	TokenTypeArrayStart  TokenType = "ARRAY_START"
-	TokenTypeObjectEnd   TokenType = "OBJECT_END"
-	TokenTypeArrayEnd    TokenType = "ARRAY_END"
+	TokenTypeField  TokenType = "field"
+	TokenTypeObject           = "object"
+	TokenTypeArray            = "array"
 )
 
 type Token struct {
-	Type  TokenType `json:"token_type"`
-	Depth int
-	Name  string
-	Count int
+	Id     string
+	Type   TokenType
+	Depth  int
+	Name   string
+	Count  int
+	fields []*Token
+}
+
+func (c *Token) Find(name string) (*Token, bool) {
+	for _, t := range c.fields {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+func (c *Token) AddField(token *Token) {
+	c.fields = append(c.fields, token)
+}
+
+func (c *Token) Merge(other *Token) {
+	combined := make([]*Token, 0)
+	for _, ct := range c.fields {
+		combined = append(combined, ct)
+		if ot, contains := other.Find(ct.Name); contains {
+			ct.Count++
+			if ct.Type == TokenTypeObject {
+				ct.Merge(ot)
+			}
+		}
+	}
+	for _, ot := range other.fields {
+		if _, contains := c.Find(ot.Name); !contains {
+			combined = append(combined, ot)
+		}
+	}
+	c.fields = combined
 }
 
 type TokenSet struct {
-	tokens []*Token
+	root *Token
 }
 
-func (t *TokenSet) AddToken(token *Token) {
-	t.tokens = append(t.tokens, token)
+func printTokenSet(t *TokenSet) {
+	printObject(t.root, 0)
 }
 
-func (t *TokenSet) FindToken(name string) (*Token, error) {
-	i := len(t.tokens) - 1
-	for i >= 0 {
-		if t.tokens[i].Type == TokenTypeObjectStart {
-			return nil, errors.New("field not in object scope")
-		}
-		if t.tokens[i].Name == name {
-			return t.tokens[i], nil
-		}
-		i--
-	}
-	return nil, errors.New("field not found")
-}
-
-func printTokenSet(tokenSet *TokenSet) {
-	for i, token := range tokenSet.tokens {
-		if token.Type == TokenTypeObjectStart || token.Type == TokenTypeObjectEnd {
-			printObject(token, i == len(tokenSet.tokens)-1)
-		} else if token.Type == TokenTypeArrayStart || token.Type == TokenTypeArrayEnd {
-			printArray(token)
-		} else {
-			printField(token)
-		}
-	}
-}
-
-func printField(token *Token) {
-	pad := strings.Repeat(" ", token.Depth*2)
-	fmt.Printf("%s%s: %d\n", pad, token.Name, token.Count)
-}
-
-func printObject(token *Token, end bool) {
-	pad := strings.Repeat(" ", token.Depth*2)
-	if end {
-		fmt.Println("}")
-	} else if token.Name == "" {
-		if token.Depth == 0 || token.Name == "" {
-			fmt.Printf("%s{\n", pad)
-		} else {
-			fmt.Printf("%s}\n", pad)
-		}
+func printObject(object *Token, depth int) {
+	padding := strings.Repeat(" ", depth)
+	if object.Name == "" {
+		fmt.Println(fmt.Sprintf("%s{ %d", padding, object.Count))
 	} else {
-		fmt.Printf("%s%s: {\n", pad, token.Name)
+		fmt.Println(fmt.Sprintf("%s%s: { %d", padding, object.Name, object.Count))
 	}
+	for _, field := range object.fields {
+		if field.Type == TokenTypeField {
+			fmt.Println(fmt.Sprintf("%s%s: %d", strings.Repeat(" ", depth+1), field.Name, field.Count))
+		} else if field.Type == TokenTypeObject {
+			printObject(field, depth+1)
+		} else {
+			printArray(field, depth+1)
+		}
+	}
+	fmt.Println(fmt.Sprintf("%s}", padding))
 }
 
-func printArray(token *Token) {
-	pad := strings.Repeat(" ", token.Depth*2)
-	if token.Name == "" {
-		fmt.Printf("%s]\n", pad)
+func printArray(array *Token, depth int) {
+	padding := strings.Repeat(" ", depth)
+	if array.Name == "" {
+		fmt.Println(fmt.Sprintf("%s[ %d", padding, array.Count))
 	} else {
-		fmt.Printf("%s%s: [\n", pad, token.Name)
+		fmt.Println(fmt.Sprintf("%s%s: [ %d", padding, array.Name, array.Count))
 	}
+	for _, field := range array.fields {
+		if field.Type == TokenTypeField {
+			fmt.Println(fmt.Sprintf("%s%s: %d", strings.Repeat(" ", depth+1), field.Name, field.Count))
+		} else if field.Type == TokenTypeObject {
+			printObject(field, depth+1)
+		} else {
+			printArray(field, depth+1)
+		}
+	}
+	fmt.Println(fmt.Sprintf("%s]", padding))
 }
 
 func main() {
@@ -125,83 +141,87 @@ func main() {
 	}
 
 	tokenSet := &TokenSet{
-		tokens: []*Token{},
+		root: &Token{
+			Id:     uuid.New().String(),
+			Type:   TokenTypeObject,
+			Depth:  0,
+			Name:   "",
+			Count:  1,
+			fields: make([]*Token, 0),
+		},
 	}
 
-	processObject(0, "", jsonObj, tokenSet)
+	processObject(jsonObj, tokenSet.root)
 
 	printTokenSet(tokenSet)
 }
 
-func processObject(depth int, name string, object map[string]interface{}, tokenSet *TokenSet) {
-	tokenSet.AddToken(&Token{
-		Type:  TokenTypeObjectStart,
-		Name:  name,
-		Depth: depth,
-	})
-	for k, v := range object {
-		if objValue, ok := v.(map[string]interface{}); ok {
-			processObject(depth+1, k, objValue, tokenSet)
-		} else if arrValue, ok := v.([]interface{}); ok {
-			processArray(depth+1, k, arrValue, tokenSet)
-		} else {
-			token, findErr := tokenSet.FindToken(k)
-			if findErr != nil {
-				token = &Token{
-					Type:  TokenTypeField,
-					Name:  k,
-					Count: 0,
-					Depth: depth + 1,
+func processObject(jsonObject map[string]interface{}, container *Token) {
+	for key, value := range jsonObject {
+		if childObject, ok := value.(map[string]interface{}); ok {
+			childContainer, found := container.Find(key)
+			if !found {
+				childContainer = &Token{
+					Id:     uuid.New().String(),
+					Name:   key,
+					Depth:  container.Depth + 1,
+					Count:  0,
+					Type:   TokenTypeObject,
+					fields: make([]*Token, 0),
 				}
-				tokenSet.AddToken(token)
 			}
-			token.Count++
+			childContainer.Count++
+			container.AddField(childContainer)
+			processObject(childObject, childContainer)
+		} else if childArray, ok := value.([]interface{}); ok {
+			arrayContainer, found := container.Find(key)
+			if !found {
+				arrayContainer = &Token{
+					Id:     uuid.New().String(),
+					Name:   key,
+					Depth:  container.Depth + 1,
+					Count:  0,
+					Type:   TokenTypeArray,
+					fields: make([]*Token, 0),
+				}
+			}
+			arrayContainer.Count++
+			container.AddField(arrayContainer)
+			processArray(childArray, arrayContainer)
+		} else {
+			field, fieldFound := container.Find(key)
+			if !fieldFound {
+				field = &Token{
+					Name:  key,
+					Type:  TokenTypeField,
+					Count: 0,
+				}
+				container.AddField(field)
+			}
+			field.Count++
 		}
 	}
-	tokenSet.AddToken(&Token{
-		Type:  TokenTypeObjectEnd,
-		Depth: depth,
-	})
 }
 
-func processArray(depth int, name string, array []interface{}, tokenSet *TokenSet) {
-	tokenSet.AddToken(&Token{
-		Type:  TokenTypeArrayStart,
-		Depth: depth,
-		Name:  name,
-	})
-	fields := make(map[string]int)
-	for _, v := range array {
-		if objValue, ok := v.(map[string]interface{}); ok {
-			objSet := &TokenSet{tokens: make([]*Token, 0)}
-			processObject(depth+1, "", objValue, objSet)
-
-			for _, f := range objSet.tokens {
-				if f.Type == TokenTypeField {
-					if _, ok := fields[f.Name]; ok {
-						fields[f.Name] += 1
-					} else {
-						fields[f.Name] = 1
+func processArray(jsonArray []interface{}, container *Token) {
+	for _, item := range jsonArray { // For each item in array
+		if object, ok := item.(map[string]interface{}); ok { // and that item is an object
+			objectContainer := &Token{
+				Id:     uuid.New().String(),
+				fields: make([]*Token, 0),
+			}
+			processObject(object, objectContainer)               // process the object
+			for _, objectField := range objectContainer.fields { // iterate over the processed fields
+				field, fieldFound := container.Find(objectField.Name) // determine if field exists in current container
+				if !fieldFound {                                      // if not
+					container.AddField(objectField) // add field
+				} else { // otherwise
+					field.Count++ // increment
+					if field.Type == TokenTypeObject {
+						field.Merge(objectField)
 					}
 				}
 			}
-		} else if arrValue, ok := v.([]interface{}); ok {
-			processArray(depth+1, "", arrValue, tokenSet)
-			// TODO Fix this and correctly process array within array.
 		}
 	}
-	tokenSet.AddToken(&Token{Type: TokenTypeObjectStart, Depth: depth + 1, Name: ""})
-	for fk, fv := range fields {
-		tokenSet.AddToken(&Token{
-			Type:  TokenTypeField,
-			Name:  fk,
-			Count: fv,
-			Depth: depth + 2,
-		})
-	}
-	tokenSet.AddToken(&Token{Type: TokenTypeObjectEnd, Depth: depth + 1})
-	tokenSet.AddToken(&Token{
-		Type:  TokenTypeArrayEnd,
-		Depth: depth,
-	})
 }
