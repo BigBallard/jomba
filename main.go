@@ -12,7 +12,7 @@ import (
 )
 
 type Cli struct {
-	File   string `short:"f" long:"file" description:"Path to the JSON file. Can be relative or absolute." required:"true"`
+	File   string `short:"i" long:"input" description:"Path to the JSON file. Can be relative or absolute." required:"true"`
 	Output string `short:"o" long:"output" description:"Output file name."`
 }
 
