@@ -26,11 +26,11 @@ After processing a JSON file, the output is either printed to the console or wri
 
 The root of every JSON file is required to be an object, so the first line will generally look like this:
 ```
-{ 1
+{ 
 ```
 This equates to saying one anonymous object instance at that level. Following will be a list of fields in order of parsing, or as they would appear in the provided JSON file. Following the name of the field will be the number of times it occurs in the aggregate of objects.
 ```
-{ 1
+{ 
     name: 1
 ```
 Generally speaking, the number of field instances should not be less than or equal to the number of objects. So here is an example of a deeper aggregate:
