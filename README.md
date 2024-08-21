@@ -15,7 +15,7 @@ Jomba is run as command line utility that at the least needs to be passed a file
 eg.
 
 ```
-> jomba -f <path-to-file>
+> jomba -i <path-to-file>
 ```
 
 The path to the file can be relative or absolute.
