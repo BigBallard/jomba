@@ -1,6 +1,8 @@
 package jomba
 
-import "errors"
+import (
+	"errors"
+)
 
 type TokenType string
 
@@ -17,6 +19,21 @@ type Token struct {
 	Name   string
 	Count  int
 	fields []*Token
+}
+
+func (t *Token) Clone() *Token {
+	clone := &Token {
+		Id: t.Id,
+		Name: t.Name,
+		Depth: t.Depth,
+		Count: t.Count,
+		Type: t.Type,
+		fields: make([]*Token, 0),
+	}
+	for _, f := range t.fields {
+		clone.fields = append(clone.fields, f.Clone())
+	}
+	return clone
 }
 
 // Find searches for a child Token field with the given name.
@@ -72,6 +89,39 @@ func mergeObjects(caller *Token, other *Token) error {
 }
 
 func mergeArrays(caller *Token, other *Token) error {
+	addedTokens := make([]*Token, 0)
+	for _, otherToken := range other.fields {
+		elem, found := SliceElementWhere[Token](caller.fields, func(t Token) bool {
+			return t.Type == otherToken.Type
+		})
+		if found { // Element exists in the caller array
+			typedElem := elem.(*Token)
+			if typedElem.Type == TokenTypeField {
+				if typedElem.Name == otherToken.Name {
+					typedElem.Count++
+				} else {
+					addedTokens = append(addedTokens, otherToken)
+				}
+			} else {
+				if err := typedElem.Merge(otherToken); err != nil {
+					return err
+				}
+			}
+		} else {
+			elem, found = SliceElementWhere[Token](addedTokens, func(t Token) bool {
+				return t.Name == otherToken.Name
+			})
+			if found {
+				typedElem := elem.(*Token)
+				typedElem.Count++
+			} else {
+				addedTokens = append(addedTokens, otherToken.Clone())
+			}
+		}
+	}
+	for _, add := range addedTokens {
+		caller.fields = append(caller.fields, add)
+	}
 	return nil
 }
 

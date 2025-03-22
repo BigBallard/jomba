@@ -1,6 +1,6 @@
 module jomba
 
-go 1.22
+go 1.23
 
 require github.com/jessevdk/go-flags v1.6.1
 

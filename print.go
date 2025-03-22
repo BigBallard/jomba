@@ -12,7 +12,11 @@ func printTokenSet(t *TokenSet) {
 func printObject(object *Token, depth int) {
 	padding := strings.Repeat(" ", depth)
 	if object.Name == "" {
-		fmt.Println(fmt.Sprintf("%s{", padding))
+		if depth > 0 {
+			fmt.Println(fmt.Sprintf("%s{ %d", padding, object.Count))
+		} else {
+			fmt.Println(fmt.Sprintf("%s{", padding))
+		}
 	} else {
 		fmt.Println(fmt.Sprintf("%s%s : { %d", padding, object.Name, object.Count))
 	}

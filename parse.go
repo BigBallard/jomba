@@ -133,8 +133,12 @@ func (p *Parser) parseArray(jsonArray JsonArray, container *Token) error {
 	for _, field := range fieldTokens {
 		container.AddField(field)
 	}
-	container.AddField(objToken)
-	container.AddField(arrToken)
+	if objToken.Count > 0 {
+		container.AddField(objToken)
+	}
+	if arrToken.Count > 0 {
+		container.AddField(arrToken)
+	}
 	return nil
 }
 
