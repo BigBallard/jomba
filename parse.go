@@ -8,6 +8,8 @@ import (
 )
 
 var ParseErr = errors.New("failed to parse bytes")
+
+// Parser is a simple struct that provides a function to evaluate the JSON data and produce a TokenSet.
 type Parser struct {
 	tokenSet *TokenSet
 }
@@ -27,6 +29,8 @@ func NewParser() *Parser {
 	}
 }
 
+// ParseBytes takes the byte slice that represents the JSON data object structure and recursively evaluates the structure
+// to produce the TokenSet.
 func (p *Parser) ParseBytes(b []byte) error {
 	var jsonObj map[string]interface{}
 	if uErr := json.Unmarshal(b, &jsonObj); uErr != nil {
@@ -39,60 +43,46 @@ func (p *Parser) ParseBytes(b []byte) error {
 func (p *Parser) parseObject(jsonObject JsonObject, container *Token) error {
 	for key, value := range jsonObject {
 		valueToken, found := container.Find(key)
+		if !found {
+			valueToken = &Token{
+				Id:    uuid.NewString(),
+				Name:  key,
+				Count: 0,
+				Depth: container.Depth + 1,
+			}
+			container.AddField(valueToken)
+		}
+		valueToken.Count++
 		if obj, isObj := value.(JsonObject); isObj { // Key is JsonObject
 			if !found { // Not found, create one and add to container
-				valueToken = &Token{
-					Id: uuid.NewString(),
-					Name: key,
-					Count: 0,
-					Depth: container.Depth + 1,
-					Type: TokenTypeObject,
-				}
-				container.AddField(valueToken)
+				valueToken.Type = TokenTypeObject
 			}
-			valueToken.Count++ // Increment instance counter
 			if err := p.parseObject(obj, valueToken); err != nil { // Parse the next object in the in its own context
 				return err
 			}
-		} else if arr, isArr :=value.(JsonArray); isArr {
+		} else if arr, isArr := value.(JsonArray); isArr {
 			if !found {
-				valueToken = &Token{
-					Id: uuid.NewString(),
-					Name: key,
-					Count: 0,
-					Depth: container.Depth + 1,
-					Type: TokenTypeArray,
-				}
-				container.AddField(valueToken)
+				valueToken.Type = TokenTypeArray
 			}
-			valueToken.Count++
 			if err := p.parseArray(arr, valueToken); err != nil {
 				return err
 			}
 		} else {
 			if !found {
-				valueToken = &Token{
-					Id: uuid.NewString(),
-					Name: key,
-					Count: 0,
-					Depth: container.Depth + 1,
-					Type: TokenTypeField,
-				}
-				container.AddField(valueToken)
+				valueToken.Type = TokenTypeField
 			}
-			valueToken.Count++
 		}
 	}
 	return nil
 }
 
 func (p *Parser) parseArray(jsonArray JsonArray, container *Token) error {
-	// Iterate through each element in the array and determine its type. Objects will be an aggregate of the first level of keys.
-	// This will make processing manageable and user presentation sensible since array values are generally either
-	// arbitrary or context specific. Literals will be counted on a per value basis, so each unique literal value will be
-	// an element entry.
-	objToken := &Token{Type: TokenTypeObject, Depth: container.Depth+1}
-	arrToken := &Token{Type: TokenTypeArray, Depth: container.Depth+1}
+	// Iterate through each element in the array and determine its type. Objects will be an aggregate of the first level
+	// of keys. This will make processing manageable and user presentation sensible since array values are generally
+	// either arbitrary or context specific. Literals will be counted on a per-value basis, so each unique literal value
+	// will be an element entry.
+	objToken := &Token{Type: TokenTypeObject, Depth: container.Depth + 1}
+	arrToken := &Token{Type: TokenTypeArray, Depth: container.Depth + 1}
 	fieldTokens := make(map[string]*Token)
 	for _, value := range jsonArray {
 		if obj, isObj := value.(JsonObject); isObj {
@@ -121,10 +111,10 @@ func (p *Parser) parseArray(jsonArray JsonArray, container *Token) error {
 			if fieldToken, found := fieldTokens[hash]; found {
 				fieldToken.Count++
 			} else {
-				fieldTokens[hash] = &Token {
-					Name: literal,
+				fieldTokens[hash] = &Token{
+					Name:  literal,
 					Count: 1,
-					Type: TokenTypeField,
+					Type:  TokenTypeField,
 					Depth: container.Depth + 1,
 				}
 			}

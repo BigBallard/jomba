@@ -34,7 +34,7 @@ func printObject(object *Token, depth int) {
 
 func printArray(array *Token, depth int) {
 	padding := strings.Repeat(" ", depth)
-	if array.Name == "" { // Not an object field
+	if array.Name == "" { // Not an object field, is array element
 		fmt.Println(fmt.Sprintf("%s[ %d", padding, array.Count))
 	} else {
 		fmt.Println(fmt.Sprintf("%s%s : [ %d", padding, array.Name, array.Count))
